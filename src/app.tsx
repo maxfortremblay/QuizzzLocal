@@ -352,8 +352,7 @@ const App = () => {
       </div>
     );
   
-    [Suite du code précédent, après HomeView et avant le RENDU PRINCIPAL]
-
+    
   /**
    * Vue de préparation
    * Configuration du jeu et sélection des playlists
