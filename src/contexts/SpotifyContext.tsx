@@ -62,4 +62,3 @@ export const useSpotifyContext = () => {
     throw new Error("useSpotifyContext doit être utilisé dans un SpotifyProvider");
   }
   return context;
-};
