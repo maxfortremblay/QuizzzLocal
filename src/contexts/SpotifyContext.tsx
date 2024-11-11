@@ -1,51 +1,67 @@
-// src/contexts/SpotifyContext.tsx
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext } from 'react';
+import { useSpotify } from '../hooks/useSpotify';
+import { SpotifyTrack, SpotifyAuth, SpotifyError } from '../types/spotify';
 
-// Types
-interface SpotifyState {
+// Interface simplifiée pour le contexte
+interface SpotifyContextState {
   isAuthenticated: boolean;
+  isLoading: boolean;
   volume: number;
-  currentTrack?: string;
+  isPlaying: boolean;
+  error: SpotifyError | null;
 }
 
-interface SpotifyContextType {
-  state: SpotifyState;
+interface SpotifyContextValue {
+  // État
+  auth: SpotifyAuth;
+  state: SpotifyContextState;
+  
+  // Actions
   login: () => Promise<void>;
   logout: () => void;
+  searchTracks: (query: string) => Promise<SpotifyTrack[]>;
+  
+  // Contrôles audio
   setVolume: (volume: number) => void;
+  playPreview: (previewUrl: string) => void;
+  pausePreview: () => void;
 }
 
-// État initial
-const initialState: SpotifyState = {
-  isAuthenticated: false,
-  volume: 50,
-  currentTrack: undefined
-};
-
 // Création du contexte
-const SpotifyContext = createContext<SpotifyContextType | undefined>(undefined);
+const SpotifyContext = createContext<SpotifyContextValue | undefined>(undefined);
 
-// Provider
-export const SpotifyProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<SpotifyState>(initialState);
-
-  const login = async () => {
-    setState(prev => ({ ...prev, isAuthenticated: true }));
-  };
-
-  const logout = () => {
-    setState(prev => ({ ...prev, isAuthenticated: false }));
-  };
-
-  const setVolume = (volume: number) => {
-    setState(prev => ({ ...prev, volume }));
-  };
-
-  const value = {
+// Provider avec useSpotify
+export const SpotifyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const {
+    auth,
     state,
     login,
     logout,
+    searchTracks,
+    playPreview,
+    pausePreview,
     setVolume
+  } = useSpotify({
+    clientId: process.env.REACT_APP_SPOTIFY_CLIENT_ID || '',
+    redirectUri: `${window.location.origin}/callback`
+  });
+
+  // Valeur du contexte
+  const value: SpotifyContextValue = {
+    auth,
+    state: {
+      isAuthenticated: Boolean(auth.accessToken),
+      isLoading: state.isLoading,
+      volume: state.volume,
+      isPlaying: state.isPlaying,
+      error: state.error
+    },
+    login,
+    logout,
+    searchTracks,
+    setVolume,
+    playPreview,
+    pausePreview
   };
 
   return (
@@ -55,10 +71,11 @@ export const SpotifyProvider: React.FC<{ children: ReactNode }> = ({ children })
   );
 };
 
-// Hook personnalisé
+// Hook personnalisé pour accéder au contexte
 export const useSpotifyContext = () => {
   const context = useContext(SpotifyContext);
   if (!context) {
-    throw new Error("useSpotifyContext doit être utilisé dans un SpotifyProvider");
+    throw new Error('useSpotifyContext doit être utilisé dans un SpotifyProvider');
   }
   return context;
+};

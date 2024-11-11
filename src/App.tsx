@@ -18,7 +18,9 @@ import {
   Trophy, ArrowLeft, Volume2, VolumeX, LogOut
 } from 'lucide-react';
 import Navbar from './Navbar';
-import { SpotifyProvider } from './contexts/SpotifyContext';
+import { AdminPrepModal } from './components/AdminPrepModal';
+import { SpotifyProvider, useSpotifyContext } from './contexts/SpotifyContext';
+import { SpotifyTrack } from './types/spotify';
 
 // Ajoutez ces constantes en haut du fichier, après les imports
 const CLIENT_ID = '3865d7b5fe544b78998db50439bc0b4c';
@@ -39,8 +41,8 @@ interface Song {
   name: string;
   artist: string;
   album: string;
-  previewUrl: string;
-  spotifyUrl?: string;
+  previewUrl: string; // On force string non-null
+  spotifyUri: string;
   year?: number;
 }
 
@@ -76,6 +78,34 @@ interface GameError {
   timestamp: number;
 }
 
+// Types complémentaires
+interface AudioState {
+  isPlaying: boolean;
+  volume: number;
+  currentTime: number;
+  duration: number;
+}
+
+interface SearchState {
+  query: string;
+  isLoading: boolean;
+  results: Song[];
+  error: string | null;
+}
+
+// Types basés sur l'API Spotify
+interface SpotifyApiTrack {
+  id: string;
+  name: string;
+  preview_url: string | null;
+  artists: { name: string }[];
+  album: {
+    name: string;
+    release_date: string;
+  };
+  uri: string;
+}
+
 // Mise à jour de la config par défaut
 const DEFAULT_CONFIG: GameConfig = {
   rounds: 5,
@@ -88,6 +118,20 @@ const DEFAULT_CONFIG: GameConfig = {
   }
 };
 
+// En haut du fichier App.tsx, après les imports
+const convertToSong = (track: SpotifyTrack): Song | null => {
+  if (!track.previewUrl) return null;
+  return {
+    id: track.id,
+    name: track.name,
+    artist: track.artist,
+    album: track.album,
+    previewUrl: track.previewUrl,
+    spotifyUri: track.spotifyUri,
+    year: track.year
+  };
+};
+
 const App = () => {
   // États et hooks
   const [gameState, setGameState] = useState<GameState>('home');
@@ -95,6 +139,7 @@ const App = () => {
   const [gameConfig, setGameConfig] = useState<GameConfig>(DEFAULT_CONFIG);
   const [error, setError] = useState<GameError | null>(null);
   const [spotifyToken, setSpotifyToken] = useState<string | null>(null);
+  const [isAdminPrepOpen, setIsAdminPrepOpen] = useState(false);
 
   // Ajoutez cette fonction dans le composant App, avec les autres fonctions utilitaires
   const handleSpotifyAuth = () => {
@@ -143,6 +188,42 @@ const App = () => {
   useEffect(() => {
     checkAndSetToken();
   }, []);
+
+  // États Spotify
+  const [spotifyTracks, setSpotifyTracks] = useState<SpotifyApiTrack[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const convertSpotifyTrackToSong = (track: SpotifyApiTrack): Song | null => {
+    if (!track.preview_url) return null;
+    
+    return {
+      id: track.id,
+      name: track.name,
+      artist: track.artists[0].name,
+      album: track.album.name,
+      previewUrl: track.preview_url,
+      spotifyUri: track.uri,
+      year: new Date(track.album.release_date).getFullYear()
+    };
+  };
+
+  const isValidTrack = (track: SpotifyApiTrack): boolean => {
+    return Boolean(
+      track.id &&
+      track.preview_url &&
+      track.name &&
+      track.artists?.length > 0
+    );
+  };
+
+  const handleTrackSelection = (tracks: SpotifyApiTrack[]) => {
+    const validSongs = tracks
+      .filter(isValidTrack)
+      .map(convertSpotifyTrackToSong)
+      .filter((song): song is Song => song !== null);
+    
+    setSongs(validSongs);
+  };
 
   // ===============================================
   // ÉTATS DU JEU
@@ -352,19 +433,45 @@ const App = () => {
         {/* Actions */}
         <div className="space-y-4">
           <button
-            onClick={() => transitionToState('preparation')}
-            disabled={teams.length < 2}
-            className="flex items-center justify-center w-full gap-2 p-4 text-lg font-bold text-white shadow-lg transition-all duration-200 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.01] active:scale-[0.99]"
+            onClick={() => setIsAdminPrepOpen(true)}
+            className="flex items-center justify-center w-full gap-2 p-4 text-lg 
+              font-bold text-white shadow-lg transition-all duration-200 
+              bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl 
+              hover:from-purple-700 hover:to-pink-700 transform 
+              hover:scale-[1.01] active:scale-[0.99]"
           >
-            <Settings className="w-6 h-6" />
-            Préparer la partie
+            <Music2 className="w-6 h-6" />
+            Préparer la playlist
           </button>
-          
-          {teams.length < 2 && (
-            <p className="text-sm text-center text-gray-500">
-              Ajoutez au moins 2 équipes pour commencer
-            </p>
-          )}
+
+          {/* Création d'équipes */}
+          <button
+            onClick={() => transitionToState('preparation')}
+            disabled={teams.length < 2 || songs.length === 0}
+            className="flex items-center justify-center w-full gap-2 p-4 
+              text-lg font-bold text-white shadow-lg transition-all duration-200 
+              bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl 
+              hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 
+              disabled:cursor-not-allowed transform hover:scale-[1.01] 
+              active:scale-[0.99]"
+          >
+            <Users className="w-6 h-6" />
+            Créer les équipes
+          </button>
+
+          {/* Messages d'aide */}
+          <div className="space-y-2">
+            {teams.length < 2 && (
+              <p className="text-sm text-center text-gray-500">
+                Ajoutez au moins 2 équipes pour commencer
+              </p>
+            )}
+            {songs.length === 0 && (
+              <p className="text-sm text-center text-gray-500">
+                Préparez la playlist avant de commencer
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Ajoutez ce bouton dans le composant HomeView ou où vous souhaitez placer le bouton de connexion */}
@@ -389,28 +496,97 @@ const App = () => {
    * - Feedback utilisateur
    */
   const PreparationView = () => {
+    const { 
+      state: { isLoading }, 
+      searchTracks, 
+      playPreview, 
+      pausePreview 
+    } = useSpotifyContext();
     const [searchQuery, setSearchQuery] = useState('');
-    const [isSearching, setIsSearching] = useState(false);
+    const [searchResults, setSearchResults] = useState<Song[]>([]);
     const [previewingSong, setPreviewingSong] = useState<string | null>(null);
+    const [selectedSongs, setSelectedSongs] = useState<Song[]>([]);
 
-    // Gestion de la recherche
-    const handleSearch = useCallback(async (query: string) => {
-      if (!query.trim()) return;
-      setIsSearching(true);
-      // Simulation recherche Spotify - à remplacer par l'API réelle
-      setTimeout(() => setIsSearching(false), 1000);
-    }, []);
-
-    // Prévisualisation audio
-    const previewSong = useCallback((songId: string) => {
-      if (previewingSong === songId) {
-        audioRef.current?.pause();
-        setPreviewingSong(null);
-      } else {
-        setPreviewingSong(songId);
-        // Logique de lecture à implémenter
+    // Mise à jour de l'utilisation de searchTracks
+    useEffect(() => {
+      if (!searchQuery.trim()) {
+        setSearchResults([]);
+        return;
       }
-    }, [previewingSong]);
+
+      const debounceTimeout = setTimeout(async () => {
+        try {
+          const tracks = await searchTracks(searchQuery);
+          const validSongs = tracks
+            .map(convertToSong)
+            .filter((song): song is Song => song !== null);
+          setSearchResults(validSongs);
+        } catch (error) {
+          handleError('general', 'Erreur lors de la recherche');
+        }
+      }, 300);
+
+      return () => clearTimeout(debounceTimeout);
+    }, [searchQuery, searchTracks]);
+
+    const handlePreview = useCallback((songId: string) => {
+      const song = searchResults.find(s => s.id === songId);
+      if (!song) return;
+
+      if (previewingSong === songId) {
+        pausePreview();
+        setPreviewingSong(null);
+      } else if (song.previewUrl) {
+        playPreview(song.previewUrl);
+        setPreviewingSong(songId);
+      }
+    }, [searchResults, previewingSong, playPreview, pausePreview]);
+
+    // Nettoyage à la destruction
+    useEffect(() => {
+      return () => {
+        pausePreview();
+      };
+    }, [pausePreview]);
+
+    // Ajout d'une chanson à la playlist
+    const addTrack = (track: SpotifyTrack) => {
+      if (!track.previewUrl) return; // Ignore les pistes sans preview
+      
+      const song: Song = {
+        id: track.id,
+        name: track.name,
+        artist: track.artist,
+        album: track.album,
+        previewUrl: track.previewUrl,
+        spotifyUri: track.spotifyUri,
+        year: track.year
+      };
+      
+      setSongs(prev => [...prev, song]);
+    };
+
+    // Dans le composant où setSongs est utilisé
+    const handleSelectedTracks = (selectedTracks: SpotifyTrack[]) => {
+      const validSongs: Song[] = selectedTracks
+        .filter((track): track is SpotifyTrack & { previewUrl: string } => 
+          track.previewUrl !== null && track.previewUrl !== undefined
+        )
+        .map(track => ({
+          id: track.id,
+          name: track.name,
+          artist: track.artist,
+          album: track.album,
+          previewUrl: track.previewUrl, // Maintenant on sait que c'est une string
+          spotifyUri: track.spotifyUri,
+          year: track.year
+        }));
+    
+      setSongs(validSongs);
+    };
+    
+    // Utilisation
+    handleSelectedTracks(selectedSongs);
 
     return (
       <div className="min-h-screen p-8 bg-gradient-to-br from-purple-50 to-pink-50">
@@ -434,11 +610,8 @@ const App = () => {
             <div className="p-6 border-b">
               <h3 className="flex items-center gap-2 font-semibold">
                 <Music2 className="w-5 h-5 text-purple-600" />
-                Playlist du quiz
+                Playlist du quiz ({songs.length}/{gameConfig.rounds} chansons)
               </h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Minimum {gameConfig.rounds} chansons nécessaires
-              </p>
             </div>
 
             <div className="p-6 space-y-6">
@@ -447,23 +620,59 @@ const App = () => {
                 <input
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    handleSearch(e.target.value);
-                  }}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Rechercher une chanson..."
                   className="w-full px-4 py-3 pl-10 transition-all border rounded-lg focus:ring-2 focus:ring-purple-200 focus:border-purple-500"
                 />
                 <Search className="absolute w-5 h-5 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-                {isSearching && (
+                {isLoading && (
                   <div className="absolute transform -translate-y-1/2 right-3 top-1/2">
                     <div className="w-4 h-4 border-2 border-purple-500 rounded-full border-t-transparent animate-spin" />
                   </div>
                 )}
               </div>
 
-              {/* Liste des chansons */}
-              <div className="space-y-2 overflow-y-auto max-h-96">
+              {/* Résultats de recherche */}
+              {searchResults.length > 0 && (
+                <div className="p-4 space-y-2 border rounded-lg bg-gray-50">
+                  <h4 className="font-medium text-gray-600">Résultats</h4>
+                  <div className="space-y-2">
+                    {searchResults.map(song => (
+                      <div
+                        key={song.id}
+                        className="flex items-center justify-between p-3 transition-colors bg-white rounded-lg hover:bg-gray-50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => handlePreview(song.id)}
+                            className="p-2 transition-colors rounded-full hover:bg-purple-100"
+                          >
+                            {previewingSong === song.id ? (
+                              <Pause className="w-5 h-5 text-purple-600" />
+                            ) : (
+                              <Play className="w-5 h-5 text-purple-600" />
+                            )}
+                          </button>
+                          <div>
+                            <div className="font-medium">{song.name}</div>
+                            <div className="text-sm text-gray-500">{song.artist}</div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => addTrack(song)}
+                          className="p-2 text-purple-600 transition-colors rounded-lg hover:bg-purple-100"
+                        >
+                          <Plus className="w-5 h-5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Playlist sélectionnée */}
+              <div className="space-y-2">
+                <h4 className="font-medium text-gray-600">Playlist sélectionnée</h4>
                 {songs.map((song, index) => (
                   <div
                     key={song.id}
@@ -471,7 +680,7 @@ const App = () => {
                   >
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => previewSong(song.id)}
+                        onClick={() => handlePreview(song.id)}
                         className="p-2 transition-colors rounded-full hover:bg-purple-100"
                       >
                         {previewingSong === song.id ? (
@@ -629,7 +838,11 @@ const App = () => {
       rounds: 5,
       duration: 30,
       volumeStart: 1,
-      volumeEnd: 0
+      volumeEnd: 0,
+      bonuses: {
+        albumName: false,
+        releaseYear: false
+      }
     });
   
     // Fonctions de contrôle audio
@@ -801,6 +1014,22 @@ const App = () => {
           {gameState === 'playing' && <GameView />}
           {gameState === 'finished' && <FinishedView />}
         </div>
+
+        {/* Modale de préparation */}
+        <AdminPrepModal
+          isOpen={isAdminPrepOpen}
+          onClose={() => setIsAdminPrepOpen(false)}
+          onSave={(selectedSongs) => {
+            setSongs(selectedSongs);
+            setIsAdminPrepOpen(false);
+            // Feedback positif
+            setError({
+              type: 'general',
+              message: '✅ Playlist sauvegardée avec succès !',
+              timestamp: Date.now()
+            });
+          }}
+        />
       </div>
     </SpotifyProvider>
   );

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { SpotifyTrack } from './types/spotify';
 
 // Types et interfaces
 export interface SpotifyAuth {
@@ -11,16 +12,6 @@ export interface SpotifyState {
   currentTrack: any;
   volume: number;
   error: string | null;
-}
-
-export interface SpotifyTrack {
-  id: string;
-  name: string;
-  artist: string;
-  album: string;
-  previewUrl: string;
-  spotifyUri: string;
-  year?: number;
 }
 
 export interface SpotifySettingsProps {
