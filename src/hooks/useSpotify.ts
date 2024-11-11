@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { SpotifyTrack, SpotifyAuth, SpotifyError } from '../types/spotify';
 
 interface UseSpotifyOptions {
@@ -14,11 +14,11 @@ interface SpotifyState {
 }
 
 export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
-  const [auth, setAuth] = useState<SpotifyAuth>({
+  const [auth, setAuth] = useState<SpotifyAuth>(() => ({
     accessToken: localStorage.getItem('spotify_access_token'),
     refreshToken: localStorage.getItem('spotify_refresh_token'),
     expiresAt: Number(localStorage.getItem('spotify_expires_at')) || null
-  });
+  }));
 
   const [state, setState] = useState<SpotifyState>({
     isLoading: false,
@@ -27,15 +27,82 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     isPlaying: false
   });
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   // Vérification du token
   const isTokenExpired = useCallback(() => {
-    return !auth.expiresAt || Date.now() > auth.expiresAt;
-  }, [auth.expiresAt]);
+    const expiresAt = localStorage.getItem('spotify_expires_at');
+    return !expiresAt || Date.now() > Number(expiresAt);
+  }, []);
 
-  // Recherche de chansons
+  // Login avec Promise
+  const login = useCallback(async (): Promise<void> => {
+    try {
+      const storedClientId = localStorage.getItem('spotify_client_id');
+      if (!storedClientId) {
+        throw new Error('Client ID manquant');
+      }
+
+      const scopes = [
+        'user-read-private',
+        'user-read-email',
+        'streaming',
+        'user-modify-playback-state'
+      ].join(' ');
+
+      const params = new URLSearchParams({
+        client_id: storedClientId,
+        response_type: 'token',
+        redirect_uri: `${window.location.origin}/callback`,
+        scope: scopes
+      });
+
+      window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+      return Promise.resolve();
+    } catch (error) {
+      console.error('Erreur de login:', error);
+      setState(prev => ({
+        ...prev,
+        error: { 
+          status: 500, 
+          message: error instanceof Error ? error.message : 'Erreur de connexion'
+        }
+      }));
+      return Promise.reject(error);
+    }
+  }, []);
+
+  // Logout
+  const logout = useCallback(() => {
+    localStorage.removeItem('spotify_access_token');
+    localStorage.removeItem('spotify_expires_at');
+    localStorage.removeItem('spotify_refresh_token');
+    
+    setAuth({
+      accessToken: null,
+      refreshToken: null,
+      expiresAt: null
+    });
+    
+    setState(prev => ({
+      ...prev,
+      error: null
+    }));
+  }, []);
+
+  // Recherche de pistes
   const searchTracks = useCallback(async (query: string): Promise<SpotifyTrack[]> => {
-    if (!auth.accessToken || isTokenExpired()) {
-      throw new Error('Token invalide ou expiré');
+    const accessToken = localStorage.getItem('spotify_access_token');
+    
+    if (!accessToken) {
+      console.error('Pas de token d\'accès');
+      throw new Error('Veuillez vous connecter à Spotify');
+    }
+
+    if (isTokenExpired()) {
+      console.error('Token expiré');
+      login(); // Redirection vers la connexion si token expiré
+      throw new Error('Session expirée, reconnexion nécessaire');
     }
 
     try {
@@ -44,15 +111,19 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
       const response = await fetch(
         `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`,
         {
-          headers: { 'Authorization': `Bearer ${auth.accessToken}` }
+          headers: { 
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
         }
       );
 
       if (!response.ok) {
-        throw new Error('Erreur de recherche');
+        throw new Error(`Erreur API: ${response.status}`);
       }
 
       const data = await response.json();
+      
       return data.tracks.items.map((track: any) => ({
         id: track.id,
         name: track.name,
@@ -63,71 +134,100 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
         year: new Date(track.album.release_date).getFullYear()
       }));
     } catch (error) {
+      console.error('Erreur lors de la recherche:', error);
       setState(prev => ({
         ...prev,
-        error: { status: 500, message: 'Erreur de recherche' }
+        error: { 
+          status: 500, 
+          message: error instanceof Error ? error.message : 'Erreur de recherche'
+        }
       }));
       throw error;
     } finally {
       setState(prev => ({ ...prev, isLoading: false }));
     }
-  }, [auth.accessToken, isTokenExpired]);
+  }, [isTokenExpired, login]);
 
-  // Gestion audio
-  const playPreview = useCallback((previewUrl: string) => {
-    if (!previewUrl) return;
-    setState(prev => ({ ...prev, isPlaying: true }));
-  }, []);
-
-  const pausePreview = useCallback(() => {
-    setState(prev => ({ ...prev, isPlaying: false }));
-  }, []);
-
+  // Gestion du volume
   const setVolume = useCallback((volume: number) => {
     setState(prev => ({ ...prev, volume }));
+    if (audioRef.current) {
+      audioRef.current.volume = volume / 100;
+    }
   }, []);
 
-  // Authentification
-  const login = useCallback(async () => {
+  // Lecture preview
+  const playPreview = useCallback((previewUrl: string) => {
     try {
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+      }
       
-      localStorage.setItem('spotify_code_verifier', codeVerifier);
+      audioRef.current.src = previewUrl;
+      audioRef.current.volume = state.volume / 100;
       
-      const params = new URLSearchParams({
-        client_id: clientId,
-        response_type: 'code',
-        redirect_uri: redirectUri,
-        code_challenge_method: 'S256',
-        code_challenge: codeChallenge,
-        scope: [
-          'streaming',
-          'user-read-email',
-          'user-read-private',
-          'user-modify-playback-state'
-        ].join(' ')
+      audioRef.current.play().then(() => {
+        setState(prev => ({ ...prev, isPlaying: true }));
+      }).catch(error => {
+        console.error('Erreur de lecture:', error);
+        setState(prev => ({
+          ...prev,
+          error: { status: 500, message: 'Erreur de lecture audio' }
+        }));
       });
-
-      window.location.href = `https://accounts.spotify.com/authorize?${params}`;
     } catch (error) {
-      setState(prev => ({
-        ...prev,
-        error: { status: 500, message: 'Erreur d\'authentification' }
-      }));
+      console.error('Erreur de configuration audio:', error);
     }
-  }, [clientId, redirectUri]);
+  }, [state.volume]);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('spotify_access_token');
-    localStorage.removeItem('spotify_refresh_token');
-    localStorage.removeItem('spotify_expires_at');
-    
-    setAuth({
-      accessToken: null,
-      refreshToken: null,
-      expiresAt: null
-    });
+  // Pause preview
+  const pausePreview = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setState(prev => ({ ...prev, isPlaying: false }));
+    }
+  }, []);
+
+  // Gestion du callback d'authentification
+  useEffect(() => {
+    const handleCallback = () => {
+      const hash = window.location.hash;
+      if (!hash) return;
+
+      const params = new URLSearchParams(hash.substring(1));
+      const accessToken = params.get('access_token');
+      const expiresIn = params.get('expires_in');
+
+      if (accessToken && expiresIn) {
+        const expiresAt = Date.now() + Number(expiresIn) * 1000;
+        
+        localStorage.setItem('spotify_access_token', accessToken);
+        localStorage.setItem('spotify_expires_at', String(expiresAt));
+
+        setAuth(prev => ({
+          ...prev,
+          accessToken,
+          expiresAt
+        }));
+
+        // Nettoyer l'URL
+        window.history.pushState("", "", window.location.pathname);
+      }
+    };
+
+    if (window.location.hash) {
+      handleCallback();
+    }
+  }, []);
+
+  // Nettoyage
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
   }, []);
 
   return {
@@ -138,26 +238,7 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     searchTracks,
     playPreview,
     pausePreview,
-    setVolume
+    setVolume,
+    isTokenExpired
   };
 };
-
-// Utilitaires pour PKCE
-function generateCodeVerifier() {
-  const array = new Uint8Array(32);
-  window.crypto.getRandomValues(array);
-  return btoa(String.fromCharCode.apply(null, Array.from(array)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
-
-async function generateCodeChallenge(verifier: string) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const digest = await window.crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(digest))))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}

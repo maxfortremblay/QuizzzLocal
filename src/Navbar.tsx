@@ -1,14 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Music2, Settings, Volume2, VolumeX, Menu, Save, Copy, LogOut
+  Music2, Settings, Volume2, VolumeX, Menu, Save, Copy, LogOut,
+  AlertCircle, Check
 } from 'lucide-react';
 import { useSpotifyContext } from './contexts/SpotifyContext';
-import { SpotifyError } from './types/spotify';
 
 const Navbar = () => {
   const { 
-    state: { isAuthenticated, volume, isPlaying, error },
-    auth,
+    state: { isAuthenticated, volume, error },
     login, 
     logout, 
     setVolume 
@@ -18,9 +17,20 @@ const Navbar = () => {
   const [spotifyClientId, setSpotifyClientId] = useState(
     () => localStorage.getItem('spotify_client_id') || ''
   );
+  const [statusMessage, setStatusMessage] = useState('');
   const redirectUri = `${window.location.origin}/callback`;
 
-  // Gestionnaire de sauvegarde avec gestion d'erreur
+  // Vérification du statut de connexion
+  useEffect(() => {
+    const token = localStorage.getItem('spotify_access_token');
+    if (token) {
+      setStatusMessage('Token Spotify trouvé');
+    } else {
+      setStatusMessage('Pas de token Spotify');
+    }
+  }, [isAuthenticated]);
+
+  // Gestionnaire de sauvegarde avec retour visuel
   const handleSaveClientId = async () => {
     try {
       if (!spotifyClientId.trim()) {
@@ -28,34 +38,18 @@ const Navbar = () => {
       }
       localStorage.setItem('spotify_client_id', spotifyClientId);
       
-      // Feedback visuel
+      // Feedback visuel amélioré
+      setStatusMessage('Client ID sauvegardé !');
       const button = document.getElementById('save-button');
       if (button) {
-        button.innerText = 'Sauvegardé !';
+        button.classList.add('bg-green-600');
         setTimeout(() => {
-          button.innerText = 'Sauvegarder';
+          button.classList.remove('bg-green-600');
+          setStatusMessage('');
         }, 2000);
       }
     } catch (err) {
-      // L'erreur sera gérée par le contexte
-      console.error('Erreur de sauvegarde:', err);
-    }
-  };
-
-  // Copie de l'URL avec gestion d'erreur
-  const handleCopyRedirectUri = async () => {
-    try {
-      await navigator.clipboard.writeText(redirectUri);
-      
-      const button = document.getElementById('copy-button');
-      if (button) {
-        button.innerText = 'Copié !';
-        setTimeout(() => {
-          button.innerText = 'Copier';
-        }, 2000);
-      }
-    } catch (err) {
-      console.error('Erreur de copie:', err);
+      setStatusMessage('Erreur: ' + (err instanceof Error ? err.message : 'Erreur inconnue'));
     }
   };
 
@@ -75,6 +69,15 @@ const Navbar = () => {
               </span>
             </div>
           </div>
+
+          {/* Statut de connexion */}
+          {statusMessage && (
+            <div className={`px-3 py-1 rounded-full text-sm ${
+              statusMessage.includes('Error') ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+            }`}>
+              {statusMessage}
+            </div>
+          )}
 
           {/* Contrôles */}
           <div className="flex items-center gap-2">
@@ -100,7 +103,7 @@ const Navbar = () => {
                   <h3 className="mb-4 font-semibold">Paramètres Spotify</h3>
                   
                   <div className="space-y-4">
-                    {/* Client ID */}
+                    {/* Client ID avec indicateur de statut */}
                     <div>
                       <label className="block mb-1 text-sm font-medium">
                         Client ID Spotify
@@ -116,7 +119,7 @@ const Navbar = () => {
                         <button
                           id="save-button"
                           onClick={handleSaveClientId}
-                          className="flex items-center gap-2 px-3 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700"
+                          className="flex items-center gap-2 px-3 py-2 text-white transition-colors bg-purple-600 rounded-lg hover:bg-purple-700"
                         >
                           <Save className="w-4 h-4" />
                           Sauvegarder
@@ -124,10 +127,10 @@ const Navbar = () => {
                       </div>
                     </div>
 
-                    {/* URL de Redirection */}
+                    {/* URL de Redirection avec copie */}
                     <div>
                       <label className="block mb-1 text-sm font-medium">
-                        URL de Redirection Spotify
+                        URL de Redirection
                       </label>
                       <div className="flex gap-2">
                         <input
@@ -137,8 +140,11 @@ const Navbar = () => {
                           className="flex-1 px-3 py-2 border rounded-lg bg-gray-50"
                         />
                         <button
-                          id="copy-button"
-                          onClick={handleCopyRedirectUri}
+                          onClick={() => {
+                            navigator.clipboard.writeText(redirectUri);
+                            setStatusMessage('URL copiée !');
+                            setTimeout(() => setStatusMessage(''), 2000);
+                          }}
                           className="flex items-center gap-2 px-3 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700"
                         >
                           <Copy className="w-4 h-4" />
@@ -147,20 +153,27 @@ const Navbar = () => {
                       </div>
                     </div>
 
-                    {/* Actions Spotify */}
+                    {/* Actions Spotify avec indicateurs de statut */}
                     <div className="pt-4 mt-4 space-y-2 border-t">
                       <button
                         onClick={login}
                         disabled={!spotifyClientId || isAuthenticated}
-                        className="flex items-center w-full gap-2 px-4 py-2 text-left hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className={`flex items-center w-full gap-2 px-4 py-2 text-left rounded-lg
+                          ${isAuthenticated 
+                            ? 'bg-green-50 text-green-600' 
+                            : 'hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed'}`}
                       >
-                        <Music2 className="w-4 h-4" />
-                        Se connecter à Spotify
+                        {isAuthenticated ? (
+                          <Check className="w-4 h-4" />
+                        ) : (
+                          <Music2 className="w-4 h-4" />
+                        )}
+                        {isAuthenticated ? 'Connecté à Spotify' : 'Se connecter à Spotify'}
                       </button>
                       <button
                         onClick={logout}
                         disabled={!isAuthenticated}
-                        className="flex items-center w-full gap-2 px-4 py-2 text-left text-red-500 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center w-full gap-2 px-4 py-2 text-left text-red-500 rounded-lg hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <LogOut className="w-4 h-4" />
                         Déconnexion
@@ -169,7 +182,8 @@ const Navbar = () => {
 
                     {/* Affichage des erreurs */}
                     {error && (
-                      <div className="px-3 py-2 text-sm text-red-600 rounded-lg bg-red-50">
+                      <div className="flex items-center gap-2 px-3 py-2 text-sm text-red-600 rounded-lg bg-red-50">
+                        <AlertCircle className="w-4 h-4" />
                         {error.message}
                       </div>
                     )}
