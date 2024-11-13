@@ -1,17 +1,100 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { 
-  Music2, Search, Play, Pause, X, Plus, 
-  AlertCircle, Save, Loader} from 'lucide-react';
-import { Song, SpotifyTrack, SpotifyApiTrack } from '../types/spotify';
+import React, { useState, useCallback } from 'react';
+import { Play, Pause, X, Plus, Search, Loader } from 'lucide-react';
+import { SpotifyTrack, Song } from '../types/spotify';
 import { spotifyService } from '../contexts/spotifyService';
 
 interface AdminPrepModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (tracks: SpotifyTrack[]) => void;
+  onSave: (songs: Song[]) => void;
 }
 
-// Composant pour chaque élément de chanson
+const AdminPrepModal: React.FC<AdminPrepModalProps> = ({ isOpen, onClose, onSave }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
+  const [selectedTracks, setSelectedTracks] = useState<SpotifyTrack[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSearch = useCallback(async () => {
+    if (!searchTerm.trim()) return;
+    
+    setIsLoading(true);
+    try {
+      const results = await spotifyService.searchTracks(searchTerm);
+      setSearchResults(results);
+    } catch (error) {
+      console.error('Erreur de recherche:', error);
+      // Gérer l'erreur si nécessaire
+    } finally {
+      setIsLoading(false);
+    }
+  }, [searchTerm]);
+
+  const handleSaveSelection = () => {
+    const validSongs = selectedTracks
+      .map(convertSpotifyTrackToSong)
+      .filter((song): song is Song => song !== null);
+    onSave(validSongs);
+    onClose();
+  };
+
+  return (
+    <div className={`modal ${isOpen ? 'open' : ''}`}>
+      <div className="modal-content">
+        <div className="modal-header">
+          <h2>Préparer la playlist</h2>
+          <button onClick={onClose} className="close-button">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="search-bar">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Rechercher des chansons sur Spotify"
+              className="search-input"
+            />
+            <button onClick={handleSearch} className="search-button">
+              <Search className="w-5 h-5" />
+            </button>
+          </div>
+          {isLoading ? (
+            <Loader className="w-6 h-6 animate-spin" />
+          ) : (
+            <div className="search-results">
+              {searchResults.map((track) => (
+                <SongItem
+                  key={track.id}
+                  song={track}
+                  onPreview={() => spotifyService.playPreview(track)}
+                  onToggle={() => setSelectedTracks((prev) =>
+                    prev.includes(track)
+                      ? prev.filter((t) => t.id !== track.id)
+                      : [...prev, track]
+                  )}
+                  isPlaying={spotifyService.getCurrentTrack()?.id === track.id}
+                  isSelected={selectedTracks.includes(track)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button
+            onClick={handleSaveSelection}
+            disabled={selectedTracks.length === 0}
+            className="save-button"
+          >
+            Enregistrer ({selectedTracks.length})
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SongItem: React.FC<{
   song: SpotifyTrack;
   onPreview: (song: SpotifyTrack) => void;
@@ -40,7 +123,7 @@ const SongItem: React.FC<{
       <div>
         <div className="font-medium">{song.name}</div>
         <div className="text-sm text-gray-500">
-          {song.artist} • {song.album}
+          {song.artists} • {song.album}
           {!song.previewUrl && (
             <span className="ml-2 text-xs text-red-500">
               Aperçu non disponible
@@ -75,88 +158,12 @@ const convertSpotifyTrackToSong = (track: SpotifyTrack): Song | null => {
   return {
     id: track.id,
     name: track.name,
-    artists: track.artists.map(artist => artist.name),
-    album: track.album.name,
-    year: track.year ? parseInt(track.year, 10) : undefined,
+    artist: track.artists,
+    album: track.album,
     previewUrl: track.previewUrl,
-    uri: track.uri
+    spotifyUri: track.spotifyUri,
+    year: track.year
   };
-};
-
-const convertToApiTrack = (track: SpotifyTrack): SpotifyApiTrack => ({
-  id: track.id,
-  name: track.name,
-  preview_url: track.previewUrl,
-  artists: track.artists.map(artist => ({
-    id: 'unknown',
-    name: artist.name
-  })),
-  album: {
-    id: 'unknown',
-    name: track.album.name,
-    release_date: track.year?.toString() || '',
-    images: track.album.images.map(image => ({
-      url: image.url,
-      height: 300, // Valeurs par défaut
-      width: 300
-    }))
-  },
-  uri: track.uri
-});
-
-const AdminPrepModal: React.FC<AdminPrepModalProps> = ({ isOpen, onClose, onSave }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
-  const [selectedTracks, setSelectedTracks] = useState<SpotifyTrack[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleSearch = useCallback(async () => {
-    if (!searchTerm.trim()) return;
-    
-    setIsLoading(true);
-    try {
-      const results = await spotifyService.searchTracks(searchTerm);
-      setSearchResults(results);
-    } catch (error) {
-      console.error('Erreur de recherche:', error);
-      // Gérer l'erreur si nécessaire
-    } finally {
-      setIsLoading(false);
-    }
-  }, [searchTerm]);
-
-  const handleSaveSelection = () => {
-    const validSongs = selectedTracks
-      .map(convertSpotifyTrackToSong)
-      .filter((song): song is Song => song !== null);
-    onSave(validSongs);
-    onClose();
-  };
-
-  return (
-    <div className="modal">
-      {/* ... autres éléments du modal ... */}
-      
-      {searchResults.map(track => (
-        <div key={track.id} className="track-item">
-          <div className="track-info">
-            <div className="font-medium">{track.name}</div>
-            <div className="text-sm text-gray-500">
-              {track.artists.map(a => a.name).join(', ')} • {track.album.name} • {track.year}
-            </div>
-          </div>
-        </div>
-      ))}
-
-      <button 
-        onClick={handleSaveSelection}
-        disabled={selectedTracks.length === 0}
-        className="save-button"
-      >
-        Enregistrer ({selectedTracks.length})
-      </button>
-    </div>
-  );
 };
 
 export default AdminPrepModal;

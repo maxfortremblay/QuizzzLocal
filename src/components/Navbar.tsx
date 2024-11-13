@@ -3,7 +3,7 @@ import {
   Music2, Settings, Volume2, VolumeX, Menu, Save, Copy, LogOut,
   AlertCircle, Check
 } from 'lucide-react';
-import { useSpotifyContext } from '../contexts/SpotifyContext';
+import { spotifyService } from '../contexts/spotifyService'; // Mise à jour de l'importation
 
 const Navbar = () => {
   const { 
@@ -11,7 +11,7 @@ const Navbar = () => {
     login, 
     logout, 
     setVolume 
-  } = useSpotifyContext();
+  } = spotifyService; // Mise à jour de la référence
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [spotifyClientId, setSpotifyClientId] = useState(

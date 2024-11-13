@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, ArrowLeft, RotateCcw, Share2, Music2 } from 'lucide-react';
 import { Team, GameStats } from '../types/game';
-import { ScoreBoard } from './ScoreBoard';
+import ScoreBoard from './ScoreBoard'; // Mise à jour de l'importation
 
 interface FinishedViewProps {
   teams: Team[];
@@ -10,12 +10,7 @@ interface FinishedViewProps {
   onBackToHome: () => void;
 }
 
-export const FinishedView: React.FC<FinishedViewProps> = ({
-  teams,
-  gameStats,
-  onRestart,
-  onBackToHome
-}) => {
+const FinishedView: React.FC<FinishedViewProps> = ({ teams, gameStats, onRestart, onBackToHome }) => {
   const [showConfetti, setShowConfetti] = useState(true);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
 
@@ -117,3 +112,5 @@ export const FinishedView: React.FC<FinishedViewProps> = ({
     </div>
   );
 };
+
+export default FinishedView;

@@ -11,7 +11,7 @@ const REQUIRED_SCOPES = [
   'user-modify-playback-state'
 ].join(' ');
 
-export class SpotifyService {
+class SpotifyService {
   private accessToken: string | null = null;
   private api: SpotifyApi | null = null;
   private audioElement: HTMLAudioElement | null = null;
@@ -25,9 +25,7 @@ export class SpotifyService {
   }
 
   private initializeApi(token: string) {
-    this.api = SpotifyApi.withAccessToken(token, {
-      baseUrl: SPOTIFY_API_BASE
-    });
+    this.api = SpotifyApi.withAccessToken(token);
   }
 
   public getAuthUrl(clientId: string, redirectUri: string): string {
@@ -37,7 +35,6 @@ export class SpotifyService {
       redirect_uri: redirectUri,
       scope: REQUIRED_SCOPES
     });
-
     return `${AUTH_ENDPOINT}?${params.toString()}`;
   }
 
@@ -45,31 +42,25 @@ export class SpotifyService {
     const params = new URLSearchParams(hash.substring(1));
     const accessToken = params.get('access_token');
     const expiresIn = params.get('expires_in');
-
     if (accessToken && expiresIn) {
-      const expiresAt = Date.now() + parseInt(expiresIn) * 1000;
-      localStorage.setItem('spotify_access_token', accessToken);
-      localStorage.setItem('spotify_expires_at', expiresAt.toString());
-      
       this.accessToken = accessToken;
       this.initializeApi(accessToken);
-
+      localStorage.setItem('spotify_access_token', accessToken);
+      localStorage.setItem('spotify_expires_at', (Date.now() + parseInt(expiresIn) * 1000).toString());
       return {
         accessToken,
         refreshToken: null,
-        expiresAt
+        expiresAt: Date.now() + parseInt(expiresIn) * 1000
       };
     }
-
-    throw new Error('Authentification échouée');
+    throw new Error('Invalid auth callback');
   }
 
   public async searchTracks(query: string): Promise<SpotifyTrack[]> {
-    if (!this.api) throw new Error('API non initialisée');
+    if (!this.api) throw new Error('API not initialized');
 
     try {
-      const response = await this.api.search(query, ['track'], 'FR', 10);
-      
+      const response = await this.api.search(query, ['track']);
       return response.tracks.items.map(track => this.convertApiTrackToTrack(track));
     } catch (error) {
       console.error('Erreur recherche Spotify:', error);
@@ -77,52 +68,27 @@ export class SpotifyService {
     }
   }
 
-  public async getTrack(id: string): Promise<SpotifyTrack> {
-    if (!this.api) throw new Error('API non initialisée');
-
-    try {
-      const track = await this.api.tracks.get(id);
-      
-      return {
-        id: track.id,
-        name: track.name,
-        artist: track.artists[0].name,
-        album: track.album.name,
-        albumCover: track.album.images[0]?.url,
-        previewUrl: track.preview_url,
-        spotifyUri: track.uri,
-        year: new Date(track.album.release_date).getFullYear()
-      };
-    } catch (error) {
-      throw this.handleApiError(error);
-    }
+  private convertApiTrackToTrack(apiTrack: SpotifyApiTrack): SpotifyTrack {
+    return {
+      id: apiTrack.id,
+      name: apiTrack.name,
+      artists: apiTrack.artists.map(artist => artist.name).join(', '),
+      album: apiTrack.album.name,
+      albumCover: apiTrack.album.images[0]?.url,
+      previewUrl: apiTrack.preview_url || null,
+      spotifyUri: apiTrack.uri,
+      year: parseInt(apiTrack.album.release_date.split('-')[0], 10)
+    };
   }
 
-  public async getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]> {
-    if (!this.api) throw new Error('API non initialisée');
-
-    try {
-      const response = await this.api.playlists.getPlaylistItems(playlistId);
-      
-      return response.items
-        .map(item => item.track)
-        .filter(track => track.type === 'track')
-        .map(track => ({
-          id: track.id,
-          name: track.name,
-          artist: track.artists[0].name,
-          album: track.album.name,
-          albumCover: track.album.images[0]?.url,
-          previewUrl: track.preview_url,
-          spotifyUri: track.uri,
-          year: new Date(track.album.release_date).getFullYear()
-        }));
-    } catch (error) {
-      throw this.handleApiError(error);
-    }
+  private handleApiError(error: any): SpotifyError {
+    return {
+      status: error.status || 500,
+      message: error.message || 'Unknown error'
+    };
   }
 
-  public playPreview(track: SpotifyTrack): void {
+  public playPreview(track: SpotifyTrack) {
     if (!track.previewUrl) return;
 
     if (this.audioElement) {
@@ -130,72 +96,12 @@ export class SpotifyService {
     }
 
     this.audioElement = new Audio(track.previewUrl);
-    this.audioElement.play();
+    this.audioElement.play().catch(error => console.error('Erreur lecture preview:', error));
     this.currentTrack = track;
-  }
-
-  public pausePreview(): void {
-    if (this.audioElement) {
-      this.audioElement.pause();
-      this.currentTrack = null;
-    }
-  }
-
-  public setVolume(volume: number): void {
-    if (this.audioElement) {
-      this.audioElement.volume = Math.max(0, Math.min(1, volume / 100));
-    }
   }
 
   public getCurrentTrack(): SpotifyTrack | null {
     return this.currentTrack;
-  }
-
-  public logout(): void {
-    localStorage.removeItem('spotify_access_token');
-    localStorage.removeItem('spotify_expires_at');
-    this.accessToken = null;
-    this.api = null;
-    this.pausePreview();
-  }
-
-  public isAuthenticated(): boolean {
-    const expiresAt = localStorage.getItem('spotify_expires_at');
-    return Boolean(
-      this.accessToken && 
-      expiresAt && 
-      Date.now() < parseInt(expiresAt)
-    );
-  }
-
-  private handleApiError(error: any): SpotifyError {
-    if (error.status === 401) {
-      this.logout();
-      return {
-        status: 401,
-        message: 'Session expirée, veuillez vous reconnecter'
-      };
-    }
-
-    return {
-      status: error.status || 500,
-      message: error.message || 'Erreur inattendue'
-    };
-  }
-
-  private convertApiTrackToTrack(apiTrack: SpotifyApiTrack): SpotifyTrack {
-    return {
-      id: apiTrack.id,
-      name: apiTrack.name,
-      artists: apiTrack.artists.map(a => ({ name: a.name })),
-      album: {
-        name: apiTrack.album.name,
-        images: apiTrack.album.images
-      },
-      previewUrl: apiTrack.preview_url || '',
-      uri: apiTrack.uri,
-      year: apiTrack.album.release_date.split('-')[0]
-    };
   }
 }
 

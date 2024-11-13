@@ -125,6 +125,8 @@ export const hasValidPreview = (track: SpotifyTrack): boolean => {
 /**
  * Convertit une piste API en piste simplifiée
  */
+import { SpotifyApiTrack, SpotifyTrack } from '../types/spotify';
+
 export const convertApiTrackToTrack = (apiTrack: SpotifyApiTrack): SpotifyTrack => ({
   id: apiTrack.id,
   name: apiTrack.name,
@@ -133,7 +135,7 @@ export const convertApiTrackToTrack = (apiTrack: SpotifyApiTrack): SpotifyTrack 
     name: apiTrack.album.name,
     images: apiTrack.album.images
   },
-  previewUrl: apiTrack.preview_url || '', // Utilisez 'preview_url' ici
+  previewUrl: apiTrack.preview_url || '',
   uri: apiTrack.uri,
   year: apiTrack.album.release_date.split('-')[0]
 });

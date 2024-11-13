@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useState } from 'react';
 import { Timer } from './Timer';
-import { ScoreBoard } from './ScoreBoard';
+import ScoreBoard from './ScoreBoard'; // Mise à jour de l'importation
 import { useGame } from '../contexts/GameContext';
 import { useAudio } from '../hooks/useAudio';
 import { Team, Song, GameConfig, GameError } from '../types/game';
@@ -12,7 +12,7 @@ interface GameViewProps {
   gameConfig: GameConfig;
   onUpdateTeams: (teams: Team[]) => void;
   onGameEnd: () => void;
-  onError: (type: 'audio' | 'game', message: string) => void;
+  onError: (type: GameError['type'], message: string) => void;
 }
 
 export const GameView: React.FC<GameViewProps> = ({
