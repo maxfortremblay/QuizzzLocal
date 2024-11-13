@@ -2,7 +2,7 @@
 export interface SpotifyApiTrack {
   id: string;
   name: string;
-  preview_url: string | null;
+  previewUrl: string | null; // Utilisez 'previewUrl' pour cohérence
   artists: Array<{
     id: string;
     name: string;
@@ -37,11 +37,11 @@ export interface SpotifyTrack {
 export interface Song {
   id: string;
   name: string;
-  artists: string[];
+  artist: string;
   album: string;
-  year?: number;
   previewUrl: string;
-  uri: string;
+  spotifyUri: string;
+  year?: number;
 }
 
 // Authentification Spotify

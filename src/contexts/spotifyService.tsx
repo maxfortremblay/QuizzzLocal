@@ -1,277 +1,202 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { SpotifyTrack } from '../types/spotify';
+import { SpotifyApi } from '@spotify/web-api-ts-sdk';
+import { SpotifyTrack, SpotifyAuth, SpotifyError, SpotifyApiTrack, Song } from '../types/spotify';
 
-// Types et interfaces
-export interface SpotifyAuth {
-  accessToken: string | null;
-  expiresAt: number | null;
-}
+const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
+const AUTH_ENDPOINT = 'https://accounts.spotify.com/authorize';
+const REQUIRED_SCOPES = [
+  'streaming',
+  'user-read-email',
+  'user-read-private',
+  'user-read-playback-state',
+  'user-modify-playback-state'
+].join(' ');
 
-export interface SpotifyState {
-  isAuthenticated: boolean;
-  currentTrack: any;
-  volume: number;
-  error: string | null;
-}
+export class SpotifyService {
+  private accessToken: string | null = null;
+  private api: SpotifyApi | null = null;
+  private audioElement: HTMLAudioElement | null = null;
+  private currentTrack: SpotifyTrack | null = null;
 
-export interface SpotifySettingsProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
+  constructor() {
+    this.accessToken = localStorage.getItem('spotify_access_token');
+    if (this.accessToken) {
+      this.initializeApi(this.accessToken);
+    }
+  }
 
-// Hook principal pour la gestion de Spotify
-export const useSpotify = () => {
-  const [auth, setAuth] = useState<SpotifyAuth>({
-    accessToken: localStorage.getItem('spotify_access_token'),
-    expiresAt: Number(localStorage.getItem('spotify_expires_at')) || null
-  });
+  private initializeApi(token: string) {
+    this.api = SpotifyApi.withAccessToken(token, {
+      baseUrl: SPOTIFY_API_BASE
+    });
+  }
 
-  const [state, setState] = useState<SpotifyState>({
-    isAuthenticated: Boolean(localStorage.getItem('spotify_access_token')),
-    currentTrack: null,
-    volume: 50,
-    error: null
-  });
+  public getAuthUrl(clientId: string, redirectUri: string): string {
+    const params = new URLSearchParams({
+      client_id: clientId,
+      response_type: 'token',
+      redirect_uri: redirectUri,
+      scope: REQUIRED_SCOPES
+    });
 
-  const isTokenExpired = useCallback(() => {
-    return !auth.expiresAt || Date.now() > auth.expiresAt;
-  }, [auth.expiresAt]);
+    return `${AUTH_ENDPOINT}?${params.toString()}`;
+  }
 
-  const login = useCallback(() => {
-    const clientId = localStorage.getItem('spotify_client_id');
-    const redirectUri = localStorage.getItem('spotify_redirect_uri');
+  public handleAuthCallback(hash: string): SpotifyAuth {
+    const params = new URLSearchParams(hash.substring(1));
+    const accessToken = params.get('access_token');
+    const expiresIn = params.get('expires_in');
 
-    if (!clientId || !redirectUri) {
-      setState(prev => ({
-        ...prev,
-        error: 'Configuration Spotify manquante'
-      }));
-      return false;
+    if (accessToken && expiresIn) {
+      const expiresAt = Date.now() + parseInt(expiresIn) * 1000;
+      localStorage.setItem('spotify_access_token', accessToken);
+      localStorage.setItem('spotify_expires_at', expiresAt.toString());
+      
+      this.accessToken = accessToken;
+      this.initializeApi(accessToken);
+
+      return {
+        accessToken,
+        refreshToken: null,
+        expiresAt
+      };
     }
 
-    const scopes = [
-      'streaming',
-      'user-read-email',
-      'user-read-private',
-      'user-modify-playback-state',
-      'user-read-playback-state'
-    ].join(' ');
+    throw new Error('Authentification échouée');
+  }
 
-    window.location.href = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}`;
-    return true;
-  }, []);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem('spotify_access_token');
-    localStorage.removeItem('spotify_expires_at');
-    setAuth({ accessToken: null, expiresAt: null });
-    setState(prev => ({
-      ...prev,
-      isAuthenticated: false,
-      currentTrack: null
-    }));
-  }, []);
-
-  const handleCallback = useCallback(() => {
-    const hash = window.location.hash
-      .substring(1)
-      .split('&')
-      .reduce<{ [key: string]: string }>((initial, item) => {
-        const parts = item.split('=');
-        initial[parts[0]] = decodeURIComponent(parts[1]);
-        return initial;
-      }, {});
-
-    if (hash.access_token) {
-      const expiresAt = Date.now() + Number(hash.expires_in) * 1000;
-      localStorage.setItem('spotify_access_token', hash.access_token);
-      localStorage.setItem('spotify_expires_at', String(expiresAt));
-
-      setAuth({
-        accessToken: hash.access_token,
-        expiresAt: expiresAt
-      });
-
-      setState(prev => ({
-        ...prev,
-        isAuthenticated: true,
-        error: null
-      }));
-
-      window.location.hash = '';
-      return true;
-    }
-    return false;
-  }, []);
-
-  const searchTracks = useCallback(async (query: string): Promise<SpotifyTrack[]> => {
-    if (!query.trim() || !auth.accessToken || isTokenExpired()) {
-      if (isTokenExpired()) {
-        logout();
-      }
-      return [];
-    }
+  public async searchTracks(query: string): Promise<SpotifyTrack[]> {
+    if (!this.api) throw new Error('API non initialisée');
 
     try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`,
-        {
-          headers: {
-            'Authorization': `Bearer ${auth.accessToken}`
-          }
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          logout();
-        }
-        throw new Error('Erreur API Spotify');
-      }
-
-      const data = await response.json();
+      const response = await this.api.search(query, ['track'], 'FR', 10);
       
-      return data.tracks.items.map((track: any) => ({
+      return response.tracks.items.map(track => this.convertApiTrackToTrack(track));
+    } catch (error) {
+      console.error('Erreur recherche Spotify:', error);
+      throw this.handleApiError(error);
+    }
+  }
+
+  public async getTrack(id: string): Promise<SpotifyTrack> {
+    if (!this.api) throw new Error('API non initialisée');
+
+    try {
+      const track = await this.api.tracks.get(id);
+      
+      return {
         id: track.id,
         name: track.name,
         artist: track.artists[0].name,
         album: track.album.name,
+        albumCover: track.album.images[0]?.url,
         previewUrl: track.preview_url,
         spotifyUri: track.uri,
-        year: track.album.release_date ? new Date(track.album.release_date).getFullYear() : undefined
-      }));
+        year: new Date(track.album.release_date).getFullYear()
+      };
     } catch (error) {
-      console.error('Erreur de recherche:', error);
-      setState(prev => ({
-        ...prev,
-        error: 'Erreur lors de la recherche'
-      }));
-      return [];
+      throw this.handleApiError(error);
     }
-  }, [auth.accessToken, isTokenExpired, logout]);
+  }
 
-  const setVolume = useCallback((volume: number) => {
-    setState(prev => ({
-      ...prev,
-      volume
-    }));
-  }, []);
+  public async getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]> {
+    if (!this.api) throw new Error('API non initialisée');
 
-  useEffect(() => {
-    if (window.location.hash) {
-      handleCallback();
+    try {
+      const response = await this.api.playlists.getPlaylistItems(playlistId);
+      
+      return response.items
+        .map(item => item.track)
+        .filter(track => track.type === 'track')
+        .map(track => ({
+          id: track.id,
+          name: track.name,
+          artist: track.artists[0].name,
+          album: track.album.name,
+          albumCover: track.album.images[0]?.url,
+          previewUrl: track.preview_url,
+          spotifyUri: track.uri,
+          year: new Date(track.album.release_date).getFullYear()
+        }));
+    } catch (error) {
+      throw this.handleApiError(error);
     }
-  }, [handleCallback]);
+  }
 
-  return {
-    auth,
-    state,
-    login,
-    logout,
-    searchTracks,
-    isTokenExpired,
-    setVolume
-  };
-};
+  public playPreview(track: SpotifyTrack): void {
+    if (!track.previewUrl) return;
 
-// Hook de recherche avec debounce
-export const useSpotifySearch = (spotify: ReturnType<typeof useSpotify>) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [results, setResults] = useState<SpotifyTrack[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-
-  useEffect(() => {
-    if (!searchTerm.trim()) {
-      setResults([]);
-      return;
+    if (this.audioElement) {
+      this.audioElement.pause();
     }
 
-    const debounceTimeout = setTimeout(async () => {
-      setIsSearching(true);
-      try {
-        const tracks = await spotify.searchTracks(searchTerm);
-        setResults(tracks);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 300);
+    this.audioElement = new Audio(track.previewUrl);
+    this.audioElement.play();
+    this.currentTrack = track;
+  }
 
-    return () => clearTimeout(debounceTimeout);
-  }, [searchTerm, spotify]);
+  public pausePreview(): void {
+    if (this.audioElement) {
+      this.audioElement.pause();
+      this.currentTrack = null;
+    }
+  }
 
-  return {
-    searchTerm,
-    setSearchTerm,
-    results,
-    isSearching
-  };
-};
+  public setVolume(volume: number): void {
+    if (this.audioElement) {
+      this.audioElement.volume = Math.max(0, Math.min(1, volume / 100));
+    }
+  }
 
-// Composant de configuration Spotify
-export const SpotifySettings: React.FC<SpotifySettingsProps> = ({ isOpen, onClose }) => {
-  const [clientId, setClientId] = useState(
-    localStorage.getItem('spotify_client_id') || ''
-  );
-  const [redirectUri, setRedirectUri] = useState(
-    localStorage.getItem('spotify_redirect_uri') || window.location.origin
-  );
+  public getCurrentTrack(): SpotifyTrack | null {
+    return this.currentTrack;
+  }
 
-  const handleSave = () => {
-    localStorage.setItem('spotify_client_id', clientId);
-    localStorage.setItem('spotify_redirect_uri', redirectUri);
-    onClose();
-  };
+  public logout(): void {
+    localStorage.removeItem('spotify_access_token');
+    localStorage.removeItem('spotify_expires_at');
+    this.accessToken = null;
+    this.api = null;
+    this.pausePreview();
+  }
 
-  if (!isOpen) return null;
+  public isAuthenticated(): boolean {
+    const expiresAt = localStorage.getItem('spotify_expires_at');
+    return Boolean(
+      this.accessToken && 
+      expiresAt && 
+      Date.now() < parseInt(expiresAt)
+    );
+  }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-md p-6 bg-white rounded-xl">
-        <h3 className="mb-4 text-lg font-bold">Configuration Spotify</h3>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block mb-1 text-sm font-medium">
-              Client ID
-            </label>
-            <input
-              type="text"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg"
-              placeholder="Votre Client ID Spotify"
-            />
-          </div>
+  private handleApiError(error: any): SpotifyError {
+    if (error.status === 401) {
+      this.logout();
+      return {
+        status: 401,
+        message: 'Session expirée, veuillez vous reconnecter'
+      };
+    }
 
-          <div>
-            <label className="block mb-1 text-sm font-medium">
-              URI de redirection
-            </label>
-            <input
-              type="text"
-              value={redirectUri}
-              onChange={(e) => setRedirectUri(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg"
-              placeholder="http://localhost:3000"
-            />
-          </div>
-        </div>
+    return {
+      status: error.status || 500,
+      message: error.message || 'Erreur inattendue'
+    };
+  }
 
-        <div className="flex justify-end gap-2 mt-6">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-600 rounded-lg hover:bg-gray-100"
-          >
-            Annuler
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-4 py-2 text-white bg-purple-600 rounded-lg hover:bg-purple-700"
-          >
-            Sauvegarder
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+  private convertApiTrackToTrack(apiTrack: SpotifyApiTrack): SpotifyTrack {
+    return {
+      id: apiTrack.id,
+      name: apiTrack.name,
+      artists: apiTrack.artists.map(a => ({ name: a.name })),
+      album: {
+        name: apiTrack.album.name,
+        images: apiTrack.album.images
+      },
+      previewUrl: apiTrack.preview_url || '',
+      uri: apiTrack.uri,
+      year: apiTrack.album.release_date.split('-')[0]
+    };
+  }
+}
+
+export const spotifyService = new SpotifyService();

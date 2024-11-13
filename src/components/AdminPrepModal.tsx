@@ -1,15 +1,14 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { 
   Music2, Search, Play, Pause, X, Plus, 
-  AlertCircle, Save, Loader
-} from 'lucide-react';
-import { useSpotifyContext } from '../contexts/SpotifyContext';
+  AlertCircle, Save, Loader} from 'lucide-react';
 import { Song, SpotifyTrack, SpotifyApiTrack } from '../types/spotify';
+import { spotifyService } from '../contexts/spotifyService';
 
 interface AdminPrepModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (tracks: SpotifyApiTrack[]) => void;
+  onSave: (tracks: SpotifyTrack[]) => void;
 }
 
 // Composant pour chaque élément de chanson
@@ -70,54 +69,67 @@ const SongItem: React.FC<{
   </div>
 );
 
-const convertSpotifyTrackToSong = (track: SpotifyApiTrack): Song | null => {
-  if (!track.preview_url) return null;
-  
-  try {
-    const year = parseInt(track.album.release_date.split('-')[0], 10);
-    
-    return {
-      id: track.id,
-      name: track.name,
-      artists: track.artists.map(artist => artist.name),
-      album: track.album.name,
-      year: isNaN(year) ? undefined : year,
-      previewUrl: track.preview_url,
-      uri: track.uri
-    };
-  } catch (err) {
-    console.error('Erreur de conversion:', err);
-    return null;
-  }
-};
+const convertSpotifyTrackToSong = (track: SpotifyTrack): Song | null => {
+  if (!track.previewUrl) return null;
 
-const AdminPrepModal: React.FC<AdminPrepModalProps> = ({ isOpen, onClose, onSave }) => {
-  const { searchTracks } = useSpotifyContext();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
-  const [selectedTracks, setSelectedTracks] = useState<SpotifyApiTrack[]>([]);
-  const [playingTrack, setPlayingTrack] = useState<SpotifyTrack | null>(null);
-
-  const convertToApiTrack = (track: SpotifyTrack): SpotifyApiTrack => ({
+  return {
     id: track.id,
     name: track.name,
-    preview_url: track.previewUrl,
-    artists: track.artists.map(artist => ({
-      id: '', // Si l'ID n'est pas disponible, utiliser une chaîne vide
-      name: typeof artist === 'string' ? artist : artist.name
-    })),
-    album: {
-      id: '', // Si l'ID n'est pas disponible, utiliser une chaîne vide
-      name: track.album.name,
-      release_date: track.year || '',
-      images: track.album.images
-    },
+    artists: track.artists.map(artist => artist.name),
+    album: track.album.name,
+    year: track.year ? parseInt(track.year, 10) : undefined,
+    previewUrl: track.previewUrl,
     uri: track.uri
-  });
+  };
+};
+
+const convertToApiTrack = (track: SpotifyTrack): SpotifyApiTrack => ({
+  id: track.id,
+  name: track.name,
+  preview_url: track.previewUrl,
+  artists: track.artists.map(artist => ({
+    id: 'unknown',
+    name: artist.name
+  })),
+  album: {
+    id: 'unknown',
+    name: track.album.name,
+    release_date: track.year?.toString() || '',
+    images: track.album.images.map(image => ({
+      url: image.url,
+      height: 300, // Valeurs par défaut
+      width: 300
+    }))
+  },
+  uri: track.uri
+});
+
+const AdminPrepModal: React.FC<AdminPrepModalProps> = ({ isOpen, onClose, onSave }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
+  const [selectedTracks, setSelectedTracks] = useState<SpotifyTrack[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSearch = useCallback(async () => {
+    if (!searchTerm.trim()) return;
+    
+    setIsLoading(true);
+    try {
+      const results = await spotifyService.searchTracks(searchTerm);
+      setSearchResults(results);
+    } catch (error) {
+      console.error('Erreur de recherche:', error);
+      // Gérer l'erreur si nécessaire
+    } finally {
+      setIsLoading(false);
+    }
+  }, [searchTerm]);
 
   const handleSaveSelection = () => {
-    const validTracks = selectedTracks.map(convertToApiTrack);
-    onSave(validTracks);
+    const validSongs = selectedTracks
+      .map(convertSpotifyTrackToSong)
+      .filter((song): song is Song => song !== null);
+    onSave(validSongs);
     onClose();
   };
 

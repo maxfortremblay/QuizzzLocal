@@ -1,5 +1,12 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { SpotifyTrack, SpotifyAuth, SpotifyError } from '../types/spotify';
+import {
+  generateAuthUrl,
+  exchangeCodeForToken,
+  refreshAccessToken,
+  searchTracks as spotifySearch,
+  hasValidPreview
+} from '../utils/spotifyUtils';
 
 interface UseSpotifyOptions {
   clientId: string;
@@ -11,176 +18,153 @@ interface SpotifyState {
   error: SpotifyError | null;
   volume: number;
   isPlaying: boolean;
+  currentTrack: SpotifyTrack | null;
 }
 
 export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
-  const [auth, setAuth] = useState<SpotifyAuth>(() => ({
+  // États
+  const [auth, setAuth] = useState<SpotifyAuth>({
     accessToken: localStorage.getItem('spotify_access_token'),
     refreshToken: localStorage.getItem('spotify_refresh_token'),
     expiresAt: Number(localStorage.getItem('spotify_expires_at')) || null
-  }));
+  });
 
   const [state, setState] = useState<SpotifyState>({
     isLoading: false,
     error: null,
     volume: 50,
-    isPlaying: false
+    isPlaying: false,
+    currentTrack: null
   });
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Audio
+  const audioRef = useState<HTMLAudioElement | null>(null);
 
-  // Vérification du token
-  const isTokenExpired = useCallback(() => {
-    const expiresAt = localStorage.getItem('spotify_expires_at');
-    return !expiresAt || Date.now() > Number(expiresAt);
-  }, []);
+  // Vérification de l'authentification
+  const isAuthenticated = useCallback(() => {
+    return Boolean(
+      auth.accessToken && 
+      auth.expiresAt && 
+      Date.now() < auth.expiresAt
+    );
+  }, [auth]);
 
-  // Login avec Promise
-  const login = useCallback(async (): Promise<void> => {
-    try {
-      const storedClientId = localStorage.getItem('spotify_client_id');
-      if (!storedClientId) {
-        throw new Error('Client ID manquant');
+  // Rafraîchissement automatique du token
+  useEffect(() => {
+    if (!auth.refreshToken || !auth.expiresAt) return;
+
+    const timeUntilExpiry = auth.expiresAt - Date.now();
+    if (timeUntilExpiry <= 0) return;
+
+    const refreshTimer = setTimeout(async () => {
+      try {
+        const newAuth = await refreshAccessToken(auth.refreshToken!, clientId);
+        setAuth(newAuth);
+        
+        // Sauvegarde en localStorage
+        localStorage.setItem('spotify_access_token', newAuth.accessToken!);
+        localStorage.setItem('spotify_refresh_token', newAuth.refreshToken!);
+        localStorage.setItem('spotify_expires_at', newAuth.expiresAt!.toString());
+      } catch (error) {
+        handleError(error);
       }
+    }, timeUntilExpiry - 60000); // Rafraîchit 1 minute avant l'expiration
 
-      const scopes = [
-        'user-read-private',
-        'user-read-email',
-        'streaming',
-        'user-modify-playback-state'
-      ].join(' ');
+    return () => clearTimeout(refreshTimer);
+  }, [auth, clientId]);
 
-      const params = new URLSearchParams({
-        client_id: storedClientId,
-        response_type: 'token',
-        redirect_uri: `${window.location.origin}/callback`,
-        scope: scopes
-      });
-
-      window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
-      return Promise.resolve();
-    } catch (error) {
-      console.error('Erreur de login:', error);
-      setState(prev => ({
-        ...prev,
-        error: { 
-          status: 500, 
-          message: error instanceof Error ? error.message : 'Erreur de connexion'
-        }
-      }));
-      return Promise.reject(error);
-    }
+  // Gestion des erreurs
+  const handleError = useCallback((error: unknown) => {
+    const spotifyError: SpotifyError = {
+      status: error instanceof Error ? 500 : 400,
+      message: error instanceof Error ? error.message : 'Erreur inconnue'
+    };
+    setState(prev => ({ ...prev, error: spotifyError }));
   }, []);
 
-  // Logout
+  // Authentification
+  const login = useCallback(async () => {
+    try {
+      const authUrl = await generateAuthUrl(clientId, redirectUri);
+      window.location.href = authUrl;
+    } catch (error) {
+      handleError(error);
+    }
+  }, [clientId, redirectUri]);
+
+  const handleCallback = useCallback(async (code: string) => {
+    try {
+      const newAuth = await exchangeCodeForToken(code, clientId, redirectUri);
+      setAuth(newAuth);
+      
+      // Sauvegarde en localStorage
+      localStorage.setItem('spotify_access_token', newAuth.accessToken!);
+      localStorage.setItem('spotify_refresh_token', newAuth.refreshToken!);
+      localStorage.setItem('spotify_expires_at', newAuth.expiresAt!.toString());
+
+      return true;
+    } catch (error) {
+      handleError(error);
+      return false;
+    }
+  }, [clientId, redirectUri]);
+
   const logout = useCallback(() => {
     localStorage.removeItem('spotify_access_token');
-    localStorage.removeItem('spotify_expires_at');
     localStorage.removeItem('spotify_refresh_token');
+    localStorage.removeItem('spotify_expires_at');
     
     setAuth({
       accessToken: null,
       refreshToken: null,
       expiresAt: null
     });
-    
-    setState(prev => ({
-      ...prev,
-      error: null
-    }));
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
   }, []);
 
   // Recherche de pistes
   const searchTracks = useCallback(async (query: string): Promise<SpotifyTrack[]> => {
-    const accessToken = localStorage.getItem('spotify_access_token');
+    if (!isAuthenticated()) {
+      throw new Error('Non authentifié');
+    }
+
+    setState(prev => ({ ...prev, isLoading: true }));
     
-    if (!accessToken) {
-      console.error('Pas de token d\'accès');
-      throw new Error('Veuillez vous connecter à Spotify');
-    }
-
-    if (isTokenExpired()) {
-      console.error('Token expiré');
-      login(); // Redirection vers la connexion si token expiré
-      throw new Error('Session expirée, reconnexion nécessaire');
-    }
-
     try {
-      setState(prev => ({ ...prev, isLoading: true }));
-      
-      const response = await fetch(
-        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`,
-        {
-          headers: { 
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Erreur API: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      return data.tracks.items.map((track: any) => ({
-        id: track.id,
-        name: track.name,
-        artist: track.artists[0].name,
-        album: track.album.name,
-        previewUrl: track.preview_url,
-        spotifyUri: track.uri,
-        year: new Date(track.album.release_date).getFullYear()
-      }));
+      const tracks = await spotifySearch(query, auth.accessToken!);
+      return tracks.filter(hasValidPreview);
     } catch (error) {
-      console.error('Erreur lors de la recherche:', error);
-      setState(prev => ({
-        ...prev,
-        error: { 
-          status: 500, 
-          message: error instanceof Error ? error.message : 'Erreur de recherche'
-        }
-      }));
-      throw error;
+      handleError(error);
+      return [];
     } finally {
       setState(prev => ({ ...prev, isLoading: false }));
     }
-  }, [isTokenExpired, login]);
+  }, [auth.accessToken, isAuthenticated]);
 
-  // Gestion du volume
-  const setVolume = useCallback((volume: number) => {
-    setState(prev => ({ ...prev, volume }));
+  // Gestion audio
+  const playPreview = useCallback((track: SpotifyTrack) => {
+    if (!track.previewUrl) return;
+
     if (audioRef.current) {
-      audioRef.current.volume = volume / 100;
+      audioRef.current.pause();
     }
-  }, []);
 
-  // Lecture preview
-  const playPreview = useCallback((previewUrl: string) => {
-    try {
-      if (!audioRef.current) {
-        audioRef.current = new Audio();
-      }
-      
-      audioRef.current.src = previewUrl;
-      audioRef.current.volume = state.volume / 100;
-      
-      audioRef.current.play().then(() => {
-        setState(prev => ({ ...prev, isPlaying: true }));
-      }).catch(error => {
-        console.error('Erreur de lecture:', error);
-        setState(prev => ({
-          ...prev,
-          error: { status: 500, message: 'Erreur de lecture audio' }
-        }));
-      });
-    } catch (error) {
-      console.error('Erreur de configuration audio:', error);
-    }
+    const audio = new Audio(track.previewUrl);
+    audio.volume = state.volume / 100;
+    
+    audio.play().catch(handleError);
+    audioRef.current = audio;
+    
+    setState(prev => ({ 
+      ...prev, 
+      isPlaying: true,
+      currentTrack: track
+    }));
   }, [state.volume]);
 
-  // Pause preview
   const pausePreview = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -188,35 +172,10 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     }
   }, []);
 
-  // Gestion du callback d'authentification
-  useEffect(() => {
-    const handleCallback = () => {
-      const hash = window.location.hash;
-      if (!hash) return;
-
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get('access_token');
-      const expiresIn = params.get('expires_in');
-
-      if (accessToken && expiresIn) {
-        const expiresAt = Date.now() + Number(expiresIn) * 1000;
-        
-        localStorage.setItem('spotify_access_token', accessToken);
-        localStorage.setItem('spotify_expires_at', String(expiresAt));
-
-        setAuth(prev => ({
-          ...prev,
-          accessToken,
-          expiresAt
-        }));
-
-        // Nettoyer l'URL
-        window.history.pushState("", "", window.location.pathname);
-      }
-    };
-
-    if (window.location.hash) {
-      handleCallback();
+  const setVolume = useCallback((volume: number) => {
+    setState(prev => ({ ...prev, volume }));
+    if (audioRef.current) {
+      audioRef.current.volume = volume / 100;
     }
   }, []);
 
@@ -225,7 +184,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current = null;
       }
     };
   }, []);
@@ -233,12 +191,13 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
   return {
     auth,
     state,
+    isAuthenticated: isAuthenticated(),
     login,
+    handleCallback,
     logout,
     searchTracks,
     playPreview,
     pausePreview,
-    setVolume,
-    isTokenExpired
+    setVolume
   };
 };
