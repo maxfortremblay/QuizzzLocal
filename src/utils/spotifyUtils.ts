@@ -133,9 +133,9 @@ export const convertApiTrackToTrack = (apiTrack: SpotifyApiTrack): SpotifyTrack 
     name: apiTrack.album.name,
     images: apiTrack.album.images
   },
-  previewUrl: apiTrack.preview_url || '',
+  previewUrl: apiTrack.preview_url || '', // Utilisez 'preview_url' ici
   uri: apiTrack.uri,
-  year: apiTrack.album.release_date.split('-')[0] // Convertir en string
+  year: apiTrack.album.release_date.split('-')[0]
 });
 
 /**
@@ -144,16 +144,16 @@ export const convertApiTrackToTrack = (apiTrack: SpotifyApiTrack): SpotifyTrack 
 export const convertToSong = (track: SpotifyTrack): Song | null => {
   if (!hasValidPreview(track)) return null;
 
-  const year = track.year ? parseInt(track.year, 10) : undefined; // Convertir en number
+  const year = track.year ? parseInt(track.year, 10) : undefined;
 
   return {
     id: track.id,
     name: track.name,
-    artists: track.artists.map(a => a.name),
+    artist: track.artists.map(a => a.name).join(', '), // Utilisez 'artist' ici
     album: track.album.name,
     year,
     previewUrl: track.previewUrl,
-    uri: track.uri
+    spotifyUri: track.uri
   };
 };
 

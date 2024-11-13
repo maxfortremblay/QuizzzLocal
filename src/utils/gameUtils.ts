@@ -7,7 +7,8 @@ export type RoundState =
   | 'guessing'
   | 'revealing' 
   | 'scoring'
-  | 'transition';
+  | 'transition'
+  | 'finished'; // Ajoutez 'finished' ici
 
 /**
  * Calcule les statistiques de jeu à partir des données de l'équipe

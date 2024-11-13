@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { SpotifyTrack, SpotifyAuth, SpotifyError } from '../types/spotify';
 import {
   generateAuthUrl,
@@ -22,7 +22,6 @@ interface SpotifyState {
 }
 
 export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
-  // États
   const [auth, setAuth] = useState<SpotifyAuth>({
     accessToken: localStorage.getItem('spotify_access_token'),
     refreshToken: localStorage.getItem('spotify_refresh_token'),
@@ -37,10 +36,8 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     currentTrack: null
   });
 
-  // Audio
-  const audioRef = useState<HTMLAudioElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Vérification de l'authentification
   const isAuthenticated = useCallback(() => {
     return Boolean(
       auth.accessToken && 
@@ -49,7 +46,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     );
   }, [auth]);
 
-  // Rafraîchissement automatique du token
   useEffect(() => {
     if (!auth.refreshToken || !auth.expiresAt) return;
 
@@ -61,19 +57,17 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
         const newAuth = await refreshAccessToken(auth.refreshToken!, clientId);
         setAuth(newAuth);
         
-        // Sauvegarde en localStorage
         localStorage.setItem('spotify_access_token', newAuth.accessToken!);
         localStorage.setItem('spotify_refresh_token', newAuth.refreshToken!);
         localStorage.setItem('spotify_expires_at', newAuth.expiresAt!.toString());
       } catch (error) {
         handleError(error);
       }
-    }, timeUntilExpiry - 60000); // Rafraîchit 1 minute avant l'expiration
+    }, timeUntilExpiry - 60000);
 
     return () => clearTimeout(refreshTimer);
   }, [auth, clientId]);
 
-  // Gestion des erreurs
   const handleError = useCallback((error: unknown) => {
     const spotifyError: SpotifyError = {
       status: error instanceof Error ? 500 : 400,
@@ -82,7 +76,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     setState(prev => ({ ...prev, error: spotifyError }));
   }, []);
 
-  // Authentification
   const login = useCallback(async () => {
     try {
       const authUrl = await generateAuthUrl(clientId, redirectUri);
@@ -97,7 +90,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
       const newAuth = await exchangeCodeForToken(code, clientId, redirectUri);
       setAuth(newAuth);
       
-      // Sauvegarde en localStorage
       localStorage.setItem('spotify_access_token', newAuth.accessToken!);
       localStorage.setItem('spotify_refresh_token', newAuth.refreshToken!);
       localStorage.setItem('spotify_expires_at', newAuth.expiresAt!.toString());
@@ -125,7 +117,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     }
   }, []);
 
-  // Recherche de pistes
   const searchTracks = useCallback(async (query: string): Promise<SpotifyTrack[]> => {
     if (!isAuthenticated()) {
       throw new Error('Non authentifié');
@@ -144,7 +135,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     }
   }, [auth.accessToken, isAuthenticated]);
 
-  // Gestion audio
   const playPreview = useCallback((track: SpotifyTrack) => {
     if (!track.previewUrl) return;
 
@@ -179,7 +169,6 @@ export const useSpotify = ({ clientId, redirectUri }: UseSpotifyOptions) => {
     }
   }, []);
 
-  // Nettoyage
   useEffect(() => {
     return () => {
       if (audioRef.current) {

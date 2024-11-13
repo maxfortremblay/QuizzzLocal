@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, createContext, ReactNode } from 'react';
-import { SpotifyService } from './SpotifyService';
+import { SpotifyService } from './contexts/spotifyService';
 import Navbar from './components/Navbar';
 import { HomeView } from './components/HomeView';
 import { PreparationView } from './components/PreparationView';
