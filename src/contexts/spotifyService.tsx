@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { SpotifyTrack } from './types/spotify';
+import { SpotifyTrack } from '../types/spotify';
 
 // Types et interfaces
 export interface SpotifyAuth {

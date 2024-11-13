@@ -3,7 +3,7 @@ import {
   Music2, Settings, Volume2, VolumeX, Menu, Save, Copy, LogOut,
   AlertCircle, Check
 } from 'lucide-react';
-import { useSpotifyContext } from './contexts/SpotifyContext';
+import { useSpotifyContext } from '../contexts/SpotifyContext';
 
 const Navbar = () => {
   const { 

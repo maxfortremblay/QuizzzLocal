@@ -16,34 +16,27 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Music2, Play, Pause, Clock, Check, X, ChevronRight, 
   Settings, Star, Users, Plus, AlertCircle, Search,
-  Trophy, ArrowLeft, Volume2, VolumeX, LogOut
+  Trophy, ArrowLeft, Volume2, VolumeX, LogOut // Ajout d'icônes manquantes
 } from 'lucide-react';
 
 // Imports internes
-import Navbar from './Navbar';
+import Navbar from './components/Navbar';
 import { AdminPrepModal } from './components/AdminPrepModal';
 import { SpotifyProvider, useSpotifyContext } from './contexts/SpotifyContext';
-import { SpotifyTrack } from './types/spotify';
+import DynamicBackground from './components/DynamicBackground';
+import { SpotifyApiTrack, Song } from './types/spotify';
 
-// Types et interfaces locales
+// Types de base
 interface Team {
   id: string;
   name: string;
-  score: number;
   color: string;
+  score: number;
+  members: string[];
+  lastUpdated?: number; // Ajout du timestamp pour le suivi
 }
 
-interface Song {
-  id: string;
-  name: string;
-  artist: string;
-  album: string;
-  albumCover?: string;
-  previewUrl: string;
-  spotifyUri: string;
-  year?: number;
-}
-
+// Types et interfaces locales
 interface PreparationViewProps {
   teams: Team[];
   songs: Song[];
@@ -77,7 +70,7 @@ interface AudioControls {
 }
 
 type GameState = 'home' | 'preparation' | 'playing' | 'finished';
-type ErrorType = 'audio' | 'storage' | 'general';
+type ErrorType = 'audio' | 'storage' | 'general' | 'conversion';
 
 interface GameError {
   type: ErrorType;
@@ -101,10 +94,10 @@ interface SearchState {
 }
 
 // Types basés sur l'API Spotify
-interface SpotifyApiTrack {
+interface SpotifyTrack {
   id: string;
   name: string;
-  preview_url: string | null;
+  previewUrl: string | null;
   artists: { name: string }[];
   album: {
     name: string;
@@ -125,6 +118,17 @@ interface SpotifyTrack {
   previewUrl: string;
   uri: string; // Ajout de la propriété manquante
   year?: string;
+}
+
+// Définition de l'interface Song
+interface Song {
+  id: string;
+  name: string;
+  artists: string[];
+  album: string;
+  year?: number;  // Optionnel
+  previewUrl: string;
+  uri: string;
 }
 
 // Mise à jour de la config par défaut
@@ -153,6 +157,11 @@ const convertToSong = (track: SpotifyTrack): Song | null => {
     spotifyUri: track.uri,
     year: track.year ? parseInt(track.year, 10) : undefined // Conversion en number
   };
+};
+
+// Déclaration unique de la fonction isSpotifyTrackValid
+const isSpotifyTrackValid = (track: SpotifyApiTrack): boolean => {
+  return track.preview_url !== null;
 };
 
 const App: React.FC = () => {
@@ -241,18 +250,9 @@ const App: React.FC = () => {
     };
   };
 
-  const isValidTrack = (track: SpotifyApiTrack): boolean => {
-    return Boolean(
-      track.id &&
-      track.preview_url &&
-      track.name &&
-      track.artists?.length > 0
-    );
-  };
-
   const handleTrackSelection = (tracks: SpotifyApiTrack[]) => {
     const validSongs = tracks
-      .filter(isValidTrack)
+      .filter(isSpotifyTrackValid)
       .map(convertSpotifyTrackToSong)
       .filter((song): song is Song => song !== null);
     
@@ -424,7 +424,7 @@ const App: React.FC = () => {
       const trimmedName = newTeamName.trim();
       
       if (!trimmedName) {
-        setTeamError("Le nom de l'équipe ne peut pas être vide");
+        setTeamError("Le nom de l'��quipe ne peut pas être vide");
         return;
       }
   
@@ -785,9 +785,66 @@ const App: React.FC = () => {
     );
   };
 
+    
+    try {
+      const year = parseInt(track.album.release_date.split('-')[0], 10);
+      
+      return {
+        id: track.id,
+        name: track.name,
+        artists: track.artists.map(artist => artist.name),
+        album: track.album.name,
+        year: isNaN(year) ? undefined : year,
+        previewUrl: track.preview_url!,
+        uri: track.uri,
+      };
+    } catch (err) {
+      console.error('Erreur lors de la conversion:', err);
+      return null;
+    }
+  }, [isSpotifyTrackValid as (track: SpotifyApiTrack) => boolean]);
+
+  // Exemple d'utilisation mise à jour
+  const someFunction = (track: SpotifyApiTrack) => {
+    if (isSpotifyTrackValid(track)) {
+      // faire quelque chose
+    }
+  };
+
+  // Autres occurrences mises à jour
+  const anotherFunction = (tracks: SpotifyApiTrack[]) => {
+    const validTracks = tracks.filter(isSpotifyTrackValid);
+    // faire quelque chose avec validTracks
+  };
+
+  // Fonction de gestion pour la sauvegarde du modal
+  const handleModalSave = useCallback((tracks: SpotifyApiTrack[]) => {
+    try {
+      const validSongs = tracks
+        .filter(isSpotifyTrackValid)
+        .map(convertSpotifyTrackToSong)
+        .filter((song): song is Song => song !== null);
+      
+      if (validSongs.length === 0) {
+        throw new Error('Aucune chanson valide dans la sélection');
+      }
+      
+      setSongs(validSongs);
+      setIsAdminPrepOpen(false);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Erreur lors de la conversion des pistes';
+      handleError('conversion', errorMessage);
+    }
+  }, [convertSpotifyTrackToSong, setSongs, setIsAdminPrepOpen, handleError]);
+
+  useEffect(() => {
+    // Votre code ici
+  }, [isSpotifyTrackValid]);
+
   return (
     <SpotifyProvider>
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50">
+      <div className="min-h-screen">  {/* Retire le bg-gradient-to-br puisque DynamicBackground s'en occupe */}
+        <DynamicBackground />  {/* AJOUTER ICI, juste après l'ouverture du div */}
         <Navbar />
         
         <div className={`pt-16 transition-opacity duration-300 
@@ -803,9 +860,9 @@ const App: React.FC = () => {
         </div>
   
         <AdminPrepModal
-          isOpen={isAdminPrepOpen}
-          onClose={() => setIsAdminPrepOpen(false)}
-          onSave={handleSelectedTracks}
+        isOpen={isAdminPrepOpen}
+        onClose={() => setIsAdminPrepOpen(false)}
+        onSave={handleModalSave}
         />
       </div>
     </SpotifyProvider>

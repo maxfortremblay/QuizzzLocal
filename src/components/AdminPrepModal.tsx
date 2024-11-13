@@ -4,12 +4,12 @@ import {
   AlertCircle, Save, Loader
 } from 'lucide-react';
 import { useSpotifyContext } from '../contexts/SpotifyContext';
-import { Song, SpotifyTrack } from '../types/spotify';
+import { Song, SpotifyTrack, SpotifyApiTrack } from '../types/spotify';
 
 interface AdminPrepModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (songs: Song[]) => void;
+  onSave: (tracks: SpotifyApiTrack[]) => void;
 }
 
 // Composant pour chaque élément de chanson
@@ -70,244 +70,81 @@ const SongItem: React.FC<{
   </div>
 );
 
-export const AdminPrepModal: React.FC<AdminPrepModalProps> = ({
-  isOpen,
-  onClose,
-  onSave
-}) => {
-  // États
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTracks, setSelectedTracks] = useState<SpotifyTrack[]>([]);
-  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
-  const [previewingSong, setPreviewingSong] = useState<string | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-
-  // Context Spotify
-  const {
-    state: { isAuthenticated, isLoading },
-    searchTracks,
-    playPreview,
-    pausePreview
-  } = useSpotifyContext();
-
-  // Effet pour la recherche avec debounce
-  useEffect(() => {
-    console.log("Recherche initiée:", searchTerm);
+const convertSpotifyTrackToSong = (track: SpotifyApiTrack): Song | null => {
+  if (!track.preview_url) return null;
+  
+  try {
+    const year = parseInt(track.album.release_date.split('-')[0], 10);
     
-    if (!searchTerm.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    if (!isAuthenticated) {
-      setSearchError("Veuillez vous connecter à Spotify");
-      return;
-    }
-
-    const debounceTimeout = setTimeout(async () => {
-      try {
-        const results = await searchTracks(searchTerm);
-        console.log("Résultats reçus:", results);
-        setSearchResults(results);
-        setSearchError(null);
-      } catch (error) {
-        console.error("Erreur de recherche:", error);
-        setSearchError("Erreur lors de la recherche. Veuillez réessayer.");
-      }
-    }, 500);
-
-    return () => clearTimeout(debounceTimeout);
-  }, [searchTerm, searchTracks, isAuthenticated]);
-
-  // Gestion de la prévisualisation
-  const handlePreview = useCallback(async (song: SpotifyTrack) => {
-    if (!song.previewUrl) {
-      setSearchError("Cette chanson n'a pas d'aperçu disponible");
-      return;
-    }
-
-    try {
-      if (previewingSong === song.id) {
-        console.log('Arrêt de la prévisualisation');
-        pausePreview();
-        setPreviewingSong(null);
-      } else {
-        console.log('Démarrage de la prévisualisation:', song.previewUrl);
-        if (previewingSong) {
-          pausePreview();
-        }
-        await playPreview(song.previewUrl);
-        setPreviewingSong(song.id);
-      }
-    } catch (error) {
-      console.error('Erreur lors de la prévisualisation:', error);
-      setSearchError("Erreur lors de la lecture de l'aperçu");
-    }
-  }, [previewingSong, playPreview, pausePreview]);
-
-  // Gestion de la sélection des pistes
-  const toggleTrack = useCallback((track: SpotifyTrack) => {
-    if (!track.previewUrl) {
-      setSearchError("Cette piste n'a pas d'aperçu disponible");
-      return;
-    }
-    
-    setSelectedTracks(prev => {
-      const exists = prev.find(t => t.id === track.id);
-      if (exists) {
-        return prev.filter(t => t.id !== track.id);
-      }
-      return [...prev, track];
-    });
-  }, []);
-
-  // Nettoyage
-  useEffect(() => {
-    return () => {
-      pausePreview();
-      setPreviewingSong(null);
+    return {
+      id: track.id,
+      name: track.name,
+      artists: track.artists.map(artist => artist.name),
+      album: track.album.name,
+      year: isNaN(year) ? undefined : year,
+      previewUrl: track.preview_url,
+      uri: track.uri
     };
-  }, [pausePreview]);
+  } catch (err) {
+    console.error('Erreur de conversion:', err);
+    return null;
+  }
+};
 
-  if (!isOpen) return null;
+const AdminPrepModal: React.FC<AdminPrepModalProps> = ({ isOpen, onClose, onSave }) => {
+  const { searchTracks } = useSpotifyContext();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
+  const [selectedTracks, setSelectedTracks] = useState<SpotifyApiTrack[]>([]);
+  const [playingTrack, setPlayingTrack] = useState<SpotifyTrack | null>(null);
+
+  const convertToApiTrack = (track: SpotifyTrack): SpotifyApiTrack => ({
+    id: track.id,
+    name: track.name,
+    preview_url: track.previewUrl,
+    artists: track.artists.map(artist => ({
+      id: '', // Si l'ID n'est pas disponible, utiliser une chaîne vide
+      name: typeof artist === 'string' ? artist : artist.name
+    })),
+    album: {
+      id: '', // Si l'ID n'est pas disponible, utiliser une chaîne vide
+      name: track.album.name,
+      release_date: track.year || '',
+      images: track.album.images
+    },
+    uri: track.uri
+  });
+
+  const handleSaveSelection = () => {
+    const validTracks = selectedTracks.map(convertToApiTrack);
+    onSave(validTracks);
+    onClose();
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        {/* En-tête */}
-        <div className="flex items-center justify-between p-6 border-b">
-          <h3 className="flex items-center gap-2 text-xl font-bold">
-            <Music2 className="w-6 h-6 text-purple-600" />
-            Préparation de la playlist
-          </h3>
-          <button 
-            onClick={onClose}
-            className="p-2 text-gray-500 rounded-lg hover:bg-gray-100"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Contenu */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Panneau de recherche */}
-          <div className="w-1/2 p-6 overflow-y-auto border-r">
-            <div className="space-y-4">
-              {/* Barre de recherche */}
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Rechercher une chanson..."
-                  className="w-full px-4 py-3 pl-10 pr-12 border rounded-lg focus:ring-2 focus:ring-purple-300 focus:border-purple-500"
-                  disabled={!isAuthenticated}
-                />
-                <Search className="absolute w-5 h-5 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-                {isLoading && (
-                  <div className="absolute transform -translate-y-1/2 right-3 top-1/2">
-                    <Loader className="w-5 h-5 text-purple-600 animate-spin" />
-                  </div>
-                )}
-              </div>
-
-              {/* Messages d'erreur */}
-              {searchError && (
-                <div className="flex items-center gap-2 px-4 py-2 text-red-600 rounded-lg bg-red-50">
-                  <AlertCircle className="w-4 h-4" />
-                  {searchError}
-                </div>
-              )}
-
-              {/* Résultats de recherche */}
-              <div className="space-y-2">
-                {searchResults.map(song => (
-                  <SongItem
-                    key={song.id}
-                    song={song}
-                    onPreview={handlePreview}
-                    onToggle={toggleTrack}
-                    isPlaying={previewingSong === song.id}
-                    isSelected={selectedTracks.some(t => t.id === song.id)}
-                  />
-                ))}
-
-                {searchTerm && !isLoading && searchResults.length === 0 && (
-                  <div className="p-4 text-center text-gray-500 rounded-lg bg-gray-50">
-                    Aucun résultat trouvé
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Liste sélectionnée */}
-          <div className="w-1/2 p-6 overflow-y-auto">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="font-semibold">
-                  Playlist ({selectedTracks.length} chansons)
-                </h4>
-                <button
-                  onClick={() => {
-                    const validSongs = selectedTracks
-                      .filter(track => track.previewUrl)
-                      .map(track => ({
-                        id: track.id,
-                        name: track.name,
-                        artist: track.artist,
-                        album: track.album,
-                        previewUrl: track.previewUrl!,
-                        spotifyUri: track.spotifyUri,
-                        year: track.year
-                      }));
-                    onSave(validSongs);
-                  }}
-                  disabled={selectedTracks.length === 0}
-                  className="flex items-center gap-2 px-4 py-2 text-white rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" />
-                  Sauvegarder
-                </button>
-              </div>
-
-              {/* Liste des pistes sélectionnées */}
-              <div className="space-y-2">
-                {selectedTracks.map((track, index) => (
-                  <div
-                    key={track.id}
-                    className="flex items-center justify-between p-4 rounded-lg bg-gray-50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-8 h-8 font-medium text-purple-600 bg-purple-100 rounded-full">
-                        {index + 1}
-                      </div>
-                      <div>
-                        <div className="font-medium">{track.name}</div>
-                        <div className="text-sm text-gray-500">
-                          {track.artist} • {track.album} • {track.year}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => toggleTrack(track)}
-                      className="p-2 text-red-500 rounded-lg hover:bg-red-50"
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                ))}
-
-                {selectedTracks.length === 0 && (
-                  <div className="p-4 text-center text-gray-500 rounded-lg bg-gray-50">
-                    Aucune chanson sélectionnée
-                  </div>
-                )}
-              </div>
+    <div className="modal">
+      {/* ... autres éléments du modal ... */}
+      
+      {searchResults.map(track => (
+        <div key={track.id} className="track-item">
+          <div className="track-info">
+            <div className="font-medium">{track.name}</div>
+            <div className="text-sm text-gray-500">
+              {track.artists.map(a => a.name).join(', ')} • {track.album.name} • {track.year}
             </div>
           </div>
         </div>
-      </div>
+      ))}
+
+      <button 
+        onClick={handleSaveSelection}
+        disabled={selectedTracks.length === 0}
+        className="save-button"
+      >
+        Enregistrer ({selectedTracks.length})
+      </button>
     </div>
   );
 };
+
+export default AdminPrepModal;
